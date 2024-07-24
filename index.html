@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test WebSocket</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.4.1/socket.io.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        #messagesList {
+            height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin-bottom: 20px;
+        }
+
+        #messageForm {
+            display: flex;
+        }
+
+        #messageInput {
+            flex-grow: 1;
+            margin-right: 10px;
+        }
+    </style>
+</head>
+<body>
+<h1>Test WebSocket</h1>
+<div id="messagesList"></div>
+<form id="messageForm">
+    <input type="text" id="messageInput" placeholder="Entrez votre message"
+           required>
+    <button type="submit">Envoyer</button>
+</form>
+
+<script>
+    const socket = io('http://localhost:3000'); // Assurez-vous que l'URL correspond à votre serveur
+
+    const messagesList = document.getElementById('messagesList');
+    const messageForm = document.getElementById('messageForm');
+    const messageInput = document.getElementById('messageInput');
+
+    // Écouter les messages entrants
+    socket.on('message', (message) => {
+        const messageElement = document.createElement('p');
+        messageElement.textContent = `${new Date(message.createdAt).toLocaleString()} - ${message.text}`;
+        messagesList.appendChild(messageElement);
+        messagesList.scrollTop = messagesList.scrollHeight;
+    });
+
+    // Gérer l'envoi de messages
+    messageForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        if (messageInput.value) {
+            socket.emit('message', messageInput.value);
+            messageInput.value = '';
+        }
+    });
+
+    // Gérer les erreurs
+    socket.on('error', (error) => {
+        console.error('Erreur WebSocket:', error);
+        const errorElement = document.createElement('p');
+        errorElement.textContent = `Erreur: ${error}`;
+        errorElement.style.color = 'red';
+        messagesList.appendChild(errorElement);
+    });
+
+    // Afficher le statut de connexion
+    socket.on('connect', () => {
+        console.log('Connecté au serveur WebSocket');
+    });
+
+    socket.on('disconnect', () => {
+        console.log('Déconnecté du serveur WebSocket');
+    });
+</script>
+</body>
+</html>
