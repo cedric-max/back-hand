@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import fs from 'fs';
 import cors from 'cors';
+import ip from 'ip';
 
 // Charger les variables d'environnement
 dotenv.config();
@@ -19,6 +20,9 @@ if (!mongoDb_uri) {
 }
 
 let dbConnection;
+let clientCount = 0;
+const clients = {};
+const MAX_PLAYERS = 2; // Nombre maximum de joueurs autorisés
 
 /**
  * Établit une connexion à la base de données MongoDB
@@ -95,17 +99,28 @@ const io = new Server(server, {
  * @param {Socket} socket - L'objet socket du client connecté
  */
 function handleSocketConnection(socket) {
-    console.log('Un client s\'est connecté');
+    if (Object.keys(clients).length >= MAX_PLAYERS) {
+        console.log('Connexion refusée : nombre maximum de joueurs atteint');
+        socket.emit('connection_refused', 'Le nombre maximum de joueurs est atteint. Veuillez réessayer plus tard.');
+        socket.disconnect(true);
+        return;
+    }
+
+    const clientName = `Joueur ${++clientCount}`;
+    clients[socket.id] = clientName;
+
+    console.log(`${clientName} s'est connecté`);
+    
+    io.emit('player_joined', { name: clientName });
 
     socket.on('message', async (message) => {
         try {
-            console.log('Message reçu:', message);
+            console.log(clientName,' : ',message);
 
             const db = await connectToDatabase();
-            const newMessage = { text: message, createdAt: new Date() };
+            const newMessage = { text: message, createdAt: new Date(), clientName };
             await db.collection('messages').insertOne(newMessage);
 
-            // Émettre le message à tous les clients connectés
             io.emit('message', newMessage);
         } catch (error) {
             console.error('Erreur lors du traitement du message:', error);
@@ -114,7 +129,9 @@ function handleSocketConnection(socket) {
     });
 
     socket.on('disconnect', () => {
-        console.log('Un client s\'est déconnecté');
+        console.log(`${clientName} s'est déconnecté`);
+        delete clients[socket.id];
+        io.emit('player_left', { name: clientName });
     });
 }
 
@@ -142,8 +159,13 @@ async function startServer() {
 
         io.on('connection', handleSocketConnection);
 
-        server.listen(process.env.PORT, () => {
-            console.log(`Serveur en écoute sur le port ${process.env.PORT}`);
+        const localIp = ip.address();
+        const port = process.env.PORT || 3000;
+
+        server.listen(port, '0.0.0.0', () => {
+            console.log(`Serveur en écoute sur http://localhost:${port}`);
+            console.log(`Accessible sur le réseau local à http://${localIp}:${port}`);
+            console.log(`Nombre maximum de joueurs autorisés : ${MAX_PLAYERS}`);
         });
     } catch (error) {
         console.error('Échec du démarrage du serveur:', error);
