@@ -7,6 +7,7 @@ import { dirname, join } from "path";
 import fs from "fs";
 import cors from "cors";
 import ip from "ip";
+import { log } from "console";
 
 // Charger les variables d'environnement
 dotenv.config();
@@ -22,7 +23,106 @@ if (!mongoDb_uri) {
 let dbConnection;
 let clientCount = 0;
 const clients = {};
+const scores = {};
 const MAX_PLAYERS = 2; // Nombre maximum de joueurs autorisés
+const MIN_PLAYERS = 2; // Nombre minimum de joueurs pour démarrer le jeu
+const MAX_ROUNDS = 5; // Nombre maximum de manches
+let currentRound = 0;
+const POSITIONS = ["verticale", "horizontale", "diagonale", "selfie"];
+
+/**
+ * Vérifie si le nombre minimum de joueurs est atteint pour démarrer le jeu
+ */
+function checkAndStartGame() {
+  if (Object.keys(clients).length === MIN_PLAYERS) {
+    io.emit("start_game", { message: "Le jeu va bientôt commencer!" });
+    console.log("Le jeu va bientôt commencer!");
+    startCountdown(startNextRound);
+  }
+}
+
+/**
+ * Lance le compte à rebours
+ * @param {Function} callback - Fonction à appeler à la fin du compte à rebours
+ */
+function startCountdown(callback) {
+  let count = 5;
+  const countdown = setInterval(() => {
+    io.emit("countdown", { count });
+    console.log(count);
+    if (count === 0) {
+      clearInterval(countdown);
+      callback();
+    }
+    count--;
+  }, 1000);
+}
+
+/**
+ * Sélectionne un joueur au hasard
+ */
+function getRandomPlayer() {
+  const playerIds = Object.keys(clients);
+  const randomIndex = Math.floor(Math.random() * playerIds.length);
+  return playerIds[randomIndex];
+}
+
+/**
+ * Démarre la prochaine manche du jeu
+ */
+function startNextRound() {
+  if (currentRound < MAX_ROUNDS) {
+    currentRound++;
+    const position = POSITIONS[Math.floor(Math.random() * POSITIONS.length)];
+    const randomPlayer = getRandomPlayer();
+    clients[randomPlayer].score += 1; // Ajouter +1 au score du joueur choisi au hasard
+
+    const gameState = {
+      joueurs: Object.keys(clients).map((id) => ({
+        nom: clients[id].name,
+        score: clients[id].score,
+        max_round : MAX_ROUNDS, 
+        position: position,
+        round_actuel: currentRound
+      })),
+      round_actuel: currentRound,
+      nombre_joueur_dans_la_partie: Object.keys(clients).length,
+      position: position,
+    };
+
+    io.emit("end_of_round", gameState); // Envoyer les informations de la manche à la fin de chaque manche
+    console.log(`Manche ${currentRound} terminée`);
+    log("gameState : ", gameState);
+
+    setTimeout(() => {
+      if (currentRound < MAX_ROUNDS) {
+        io.emit("new_round", gameState); // Envoyer les informations de la nouvelle manche
+        startCountdown(startNextRound); // Lancer le compte à rebours avant la prochaine manche
+      } else {
+        endGame();
+      }
+    }, 5000); // Chrono de 5 secondes avant la prochaine manche
+  } else {
+    endGame();
+  }
+}
+
+/**
+ * Termine le jeu et annonce les résultats
+ */
+function endGame() {
+  const gameState = {
+    joueurs: Object.keys(clients).map((id) => ({
+      nom: clients[id].name,
+      score: clients[id].score
+    })),
+    round_actuel: currentRound,
+    nombre_joueur_dans_la_partie: Object.keys(clients).length,
+  };
+  io.emit("end_game", { message: "Le jeu est terminé!", gameState });
+  log("gameState : ", gameState);
+  console.log("Le jeu est terminé");
+}
 
 /**
  * Établit une connexion à la base de données MongoDB
@@ -109,7 +209,7 @@ function handleSocketConnection(socket) {
   }
 
   const clientName = `Joueur ${++clientCount}`;
-  clients[socket.id] = clientName;
+  clients[socket.id] = { name: clientName, score: 0 };
 
   console.log(`${clientName} s'est connecté`);
 
@@ -117,19 +217,10 @@ function handleSocketConnection(socket) {
 
   socket.emit("message", { text: `Bienvenue, ${clientName}!`, createdAt: new Date(), clientName: "Serveur" });
 
-  socket.on("message", async (message) => {
-    try {
-      console.log(clientName, " : ", message);
+  checkAndStartGame(); // Vérifiez et démarrez le jeu si le nombre de joueurs est atteint
 
-      const db = await connectToDatabase();
-      const newMessage = { text: message, createdAt: new Date(), clientName };
-      await db.collection("messages").insertOne(newMessage);
-
-      io.emit("message", newMessage);
-    } catch (error) {
-      console.error("Erreur lors du traitement du message:", error);
-      socket.emit("error", "Une erreur s'est produite lors du traitement de votre message");
-    }
+  socket.on("response", (response) => {
+    handlePlayerResponse(socket.id, response);
   });
 
   socket.on("disconnect", () => {
@@ -137,6 +228,22 @@ function handleSocketConnection(socket) {
     delete clients[socket.id];
     io.emit("player_left", { name: clientName });
   });
+}
+
+/**
+ * Gère la réponse d'un joueur
+ * @param {string} socketId - L'identifiant du socket du joueur
+ * @param {Object} response - La réponse du joueur
+ */
+function handlePlayerResponse(socketId, response) {
+  if (response.status === "failure") {
+    clients[socketId].score += 1;
+    io.emit("player_failed", { playerId: socketId, score: clients[socketId].score });
+  }
+
+  if (Object.keys(clients).length === MIN_PLAYERS) {
+    startNextRound();
+  }
 }
 
 // Gestion des erreurs
