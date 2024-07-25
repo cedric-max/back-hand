@@ -109,7 +109,7 @@ function handleSocketConnection(socket) {
   }
 
   const clientName = `Joueur ${++clientCount}`;
-  clients[socket.id] = clientName;
+  clients[socket.id] = { name: clientName, socket, data: [] };
 
   console.log(`${clientName} s'est connecté`);
 
@@ -129,6 +129,26 @@ function handleSocketConnection(socket) {
     } catch (error) {
       console.error("Erreur lors du traitement du message:", error);
       socket.emit("error", "Une erreur s'est produite lors du traitement de votre message");
+    }
+  });
+
+  socket.on("sensor_data", async (data) => {
+    try {
+      const { accelerometer, gyroscope } = data;
+      const timestamp = new Date();
+
+      // Stocker les données pour le calcul de la stabilité
+      clients[socket.id].data.push({ accelerometer, gyroscope, timestamp });
+
+      // Optionnel: sauvegarder dans la base de données
+      const db = await connectToDatabase();
+      await db.collection("sensor_data").insertOne({ clientName, accelerometer, gyroscope, timestamp });
+
+      // Émettre les données des capteurs pour le débogage
+      socket.emit("sensor_data_received", { accelerometer, gyroscope, timestamp });
+    } catch (error) {
+      console.error("Erreur lors du traitement des données des capteurs:", error);
+      socket.emit("error", "Une erreur s'est produite lors du traitement des données des capteurs");
     }
   });
 
