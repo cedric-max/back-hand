@@ -221,7 +221,7 @@ const io = new Server(server, {
  * @param {Socket} socket - L'objet socket du client connecté
  */
 function handleSocketConnection(socket) {
-  console.log("Nouvelle connexion:", socket.id);
+  console.log("Nouvelle connexion:", socket.name || socket.id);
 
   if (Object.keys(clients).length >= MAX_PLAYERS) {
     console.log("Connexion refusée : nombre maximum de joueurs atteint");
