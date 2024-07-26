@@ -31,6 +31,20 @@ const POSITIONS = ["verticale", "horizontale", "diagonale", "selfie"];
 let gameStarted = false;
 let gameTimeout;
 
+let gameHistory = [];
+let isReplay = false;
+
+const ROUND_DURATION = 5000; // 5 secondes
+
+/**
+ * Enregistre un événement dans l'historique du jeu
+ * @param {string} eventType - Le type d'événement
+ * @param {Object} eventData - Les données de l'événement
+ */
+function recordEvent(eventType, eventData) {
+  gameHistory.push({ type: eventType, data: eventData, timestamp: Date.now() });
+}
+
 /**
  * Vérifie si le nombre minimum de joueurs est atteint pour démarrer le jeu
  */
@@ -76,7 +90,7 @@ function startNextRound() {
     currentRound++;
     const position = POSITIONS[Math.floor(Math.random() * POSITIONS.length)];
     const randomPlayer = getRandomPlayer();
-    clients[randomPlayer].score += 1; // Ajouter +1 au score du joueur choisi au hasard
+    clients[randomPlayer].score += 1;
 
     const gameState = {
       joueurs: Object.keys(clients).map((id) => ({
@@ -91,12 +105,14 @@ function startNextRound() {
       position: position,
     };
 
+    recordEvent("new_round", gameState);
+
     io.emit("new_round", gameState);
     console.log(`Manche ${currentRound} commencée avec position: ${position}`);
     gameStarted = true;
     gameTimeout = setTimeout(() => {
       endRound();
-    }, 5000); // Durée de la manche de 5 secondes
+    }, ROUND_DURATION);
   } else {
     endGame();
   }
@@ -108,6 +124,7 @@ function startNextRound() {
 function endRound() {
   const loserId = getRandomPlayer(); // Simuler le joueur qui a perdu
   io.emit("player_moved", { player: clients[loserId].name });
+  recordEvent("end_round", { loser: clients[loserId].name });
 
   clearTimeout(gameTimeout);
   startNextRound();
@@ -126,6 +143,7 @@ function endGame() {
     nombre_joueur_dans_la_partie: Object.keys(clients).length,
     perdant: getLoser(),
   };
+  recordEvent("end_game", gameState);
   io.emit("end_game", gameState);
   console.log("Le jeu est terminé");
   gameStarted = false;
@@ -240,10 +258,19 @@ function handleSocketConnection(socket) {
 
     socket.emit("message", { text: `Bienvenue, ${clientName}!`, createdAt: new Date(), clientName: "Serveur" });
 
-    checkAndStartGame(); // Vérifiez et démarrez le jeu si le nombre de joueurs est atteint
+    checkAndStartGame();
 
     socket.on("response", (response) => {
       handlePlayerResponse(socket.id, response);
+    });
+
+    socket.on("request_replay", () => {
+      if (!isReplay && gameHistory.length > 0) {
+        isReplay = true;
+        replayGame(socket);
+      } else {
+        socket.emit("replay_unavailable", "Replay is not available at the moment.");
+      }
     });
 
     socket.on("disconnect", () => {
@@ -252,6 +279,21 @@ function handleSocketConnection(socket) {
       io.emit("player_left", { name: clientName });
     });
   });
+}
+
+function replayGame(socket) {
+  let replayIndex = 0;
+  const replayInterval = setInterval(() => {
+    if (replayIndex < gameHistory.length) {
+      const event = gameHistory[replayIndex];
+      socket.emit(event.type, event.data);
+      replayIndex++;
+    } else {
+      clearInterval(replayInterval);
+      socket.emit("replay_ended");
+      isReplay = false;
+    }
+  }, ROUND_DURATION);
 }
 
 /**
@@ -263,6 +305,7 @@ function handlePlayerResponse(socketId, response) {
   if (response.status === "failure") {
     clients[socketId].score += 1;
     io.emit("player_failed", { playerId: socketId, score: clients[socketId].score });
+    recordEvent("player_failed", { player: clients[socketId].name, score: clients[socketId].score });
   }
 
   if (Object.keys(clients).length === MIN_PLAYERS) {
@@ -310,7 +353,6 @@ async function startServer() {
       console.log(`Nombre maximum de joueurs autorisés : ${MAX_PLAYERS}`);
     });
 
-    // Vérifiez et démarrez le jeu si le nombre de joueurs est atteint
     checkAndStartGame();
   } catch (error) {
     console.error("Échec du démarrage du serveur:", error);
